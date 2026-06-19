@@ -398,6 +398,12 @@
       box-shadow: 0 0 8px rgba(255,107,53,0.6);
     }
 
+    .camera-marker.on-route {
+      background: #ff2d55;
+      box-shadow: 0 0 12px rgba(255,45,85,0.9);
+      border-color: rgba(255,45,85,0.5);
+    }
+
     @media (prefers-reduced-motion: reduce) {
       * { animation: none !important; transition: none !important; }
     }
@@ -610,6 +616,57 @@ async function fetchCameras(bbox) {
   return data.elements || [];
 }
 
+// ── FIELD OF VIEW CONE (mimics Deflock's direction cone display) ──────────────
+// Draws a filled wedge polygon pointing in the camera's facing direction.
+function drawFovCone(lat, lon, directionDeg, lengthMeters = 35, spreadDeg = 50, color = '#ff2d55') {
+  const R = 6371000; // earth radius m
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+
+  // destination point given bearing + distance (simple flat-earth approx, fine at this scale)
+  function destPoint(lat1, lon1, bearing, dist) {
+    const latR = toRad(lat1), lonR = toRad(lon1), brR = toRad(bearing);
+    const lat2 = Math.asin(Math.sin(latR) * Math.cos(dist / R) + Math.cos(latR) * Math.sin(dist / R) * Math.cos(brR));
+    const lon2 = lonR + Math.atan2(
+      Math.sin(brR) * Math.sin(dist / R) * Math.cos(latR),
+      Math.cos(dist / R) - Math.sin(latR) * Math.sin(lat2)
+    );
+    return [toDeg(lat2), toDeg(lon2)];
+  }
+
+  const leftBearing  = directionDeg - spreadDeg / 2;
+  const rightBearing = directionDeg + spreadDeg / 2;
+  const steps = 8;
+  const points = [[lat, lon]];
+
+  for (let i = 0; i <= steps; i++) {
+    const bearing = leftBearing + (rightBearing - leftBearing) * (i / steps);
+    points.push(destPoint(lat, lon, bearing, lengthMeters));
+  }
+  points.push([lat, lon]);
+
+  return L.polygon(points, {
+    color: color,
+    weight: 1,
+    fillColor: color,
+    fillOpacity: 0.22,
+    opacity: 0.5
+  });
+}
+
+// Parse OSM camera:direction tag — can be compass letters (N, NE, etc) or degrees
+function parseDirection(tags) {
+  if (!tags) return null;
+  const raw = tags['camera:direction'] || tags['direction'];
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (!isNaN(parseFloat(raw))) return parseFloat(raw);
+  const compass = {
+    N: 0, NNE: 22.5, NE: 45, ENE: 67.5, E: 90, ESE: 112.5, SE: 135, SSE: 157.5,
+    S: 180, SSW: 202.5, SW: 225, WSW: 247.5, W: 270, WNW: 292.5, NW: 315, NNW: 337.5
+  };
+  return compass[raw.toUpperCase()] ?? null;
+}
+
 // ── POINT-TO-SEGMENT distance (degrees, good enough for short distances) ──────
 function ptSegDist(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay;
@@ -693,11 +750,21 @@ async function analyze() {
     const allCameras = await fetchCameras(bbox);
     const nearby = camerasNearRoute(allCameras, coords);
 
-    // Plot camera markers
-    const cameraIcon = L.divIcon({ className: 'camera-marker', iconSize: [10, 10] });
+    // Plot camera markers + field-of-view cones (mimics Deflock's display)
     nearby.forEach(cam => {
+      const direction = parseDirection(cam.tags);
+      const isAlpr = cam.tags?.['surveillance:type'] === 'ALPR';
+      const color = isAlpr ? '#ff2d55' : '#ff6b35';
+
+      if (direction !== null) {
+        const cone = drawFovCone(cam.lat, cam.lon, direction, 35, 50, color);
+        cone.addTo(map);
+        cameraMarkers.push(cone);
+      }
+
+      const cameraIcon = L.divIcon({ className: 'camera-marker on-route', iconSize: [10, 10] });
       const m = L.marker([cam.lat, cam.lon], { icon: cameraIcon })
-        .bindPopup(`<b>${cam.tags?.['surveillance:type'] || 'Camera'}</b><br>${cam.tags?.operator || 'Unknown operator'}`)
+        .bindPopup(`<b>${cam.tags?.['surveillance:type'] || 'Camera'}</b><br>${cam.tags?.operator || 'Unknown operator'}${direction !== null ? `<br>Facing: ${Math.round(direction)}°` : ''}`)
         .addTo(map);
       cameraMarkers.push(m);
     });
