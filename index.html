@@ -246,6 +246,7 @@
     }
 
     #result-card.visible { transform: translateY(0); }
+    #result-card.collapsed { transform: translateY(calc(100% - 56px)); }
 
     .card-handle {
       width: 36px;
@@ -253,6 +254,13 @@
       background: var(--border);
       border-radius: 2px;
       margin: 0 auto 18px;
+      cursor: pointer;
+    }
+
+    .card-handle-zone {
+      padding: 14px 0 0;
+      margin: -14px 0 4px;
+      cursor: pointer;
     }
 
     .score-row {
@@ -445,7 +453,9 @@
   <div id="status"></div>
 
   <div id="result-card">
-    <div class="card-handle"></div>
+    <div class="card-handle-zone" id="card-handle-zone">
+      <div class="card-handle"></div>
+    </div>
     <div class="score-row">
       <div class="score-label">Surveillance Score</div>
       <div class="score-badge" id="score-badge">—</div>
@@ -720,6 +730,7 @@ async function analyze() {
   const btn = document.getElementById('analyze-btn');
   btn.disabled = true;
   clearMap();
+  resultCard.classList.remove('collapsed');
   document.getElementById('start-suggestions').classList.remove('visible');
   document.getElementById('end-suggestions').classList.remove('visible');
 
@@ -811,7 +822,26 @@ async function analyze() {
   }
 }
 
-// Enter key support
+// ── RESULT CARD: tap-to-collapse + swipe-to-collapse ──────────────────────────
+const resultCard = document.getElementById('result-card');
+const handleZone  = document.getElementById('card-handle-zone');
+
+handleZone.addEventListener('click', () => {
+  resultCard.classList.toggle('collapsed');
+});
+
+let touchStartY = null;
+handleZone.addEventListener('touchstart', (e) => {
+  touchStartY = e.touches[0].clientY;
+}, { passive: true });
+
+handleZone.addEventListener('touchend', (e) => {
+  if (touchStartY === null) return;
+  const deltaY = e.changedTouches[0].clientY - touchStartY;
+  if (deltaY > 30) resultCard.classList.add('collapsed');
+  else if (deltaY < -30) resultCard.classList.remove('collapsed');
+  touchStartY = null;
+});
 ['start-input', 'end-input'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => {
     if (e.key === 'Enter') analyze();
